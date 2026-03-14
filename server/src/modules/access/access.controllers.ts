@@ -4,6 +4,7 @@ import {
   createSubfolderFromAccess,
   logAccessVisit,
   resolveAccessToken,
+  uploadMediaFromAccess,
 } from "./access.service";
 import { createSubfolderSchema } from "./access.schema";
 import { env } from "../../config/env";
@@ -36,7 +37,7 @@ export const getAccessByToken = async (req: Request, res: Response) => {
   if (!data) {
     return res.status(404).json({ message: "Access link not found" });
   }
-  if (!data.is_active) {
+  if (!data.accessLink.is_active) {
     return res.status(403).json({ message: "Access link inactive" });
   }
   const visitorKey = getVisitorKey(req, res);
@@ -45,18 +46,18 @@ export const getAccessByToken = async (req: Request, res: Response) => {
       ? req.headers["x-forwarded-for"].split(",")[0]
       : req.ip;
   const visitType =
-    data.access_type === "event_dashboard"
+    data.accessLink.access_type === "event_dashboard"
       ? "dashboard_view"
-      : data.access_type === "global_upload" ||
-          data.access_type === "subfolder_upload"
+      : data.accessLink.access_type === "global_upload" ||
+          data.accessLink.access_type === "subfolder_upload"
         ? "upload_page_view"
-        : data.access_type === "subfolder_dashboard"
+        : data.accessLink.access_type === "subfolder_dashboard"
           ? "dashboard_view"
           : "open";
   await logAccessVisit({
-    accessLinkId: data.id,
-    eventId: data.event_id,
-    folderId: data.folder_id,
+    accessLinkId: data.accessLink.id,
+    eventId: data.event.id,
+    folderId: data.folder?.id || null,
     visitorKey,
     ipHash: ip ? sha256(ip) : null,
     userAgent:
@@ -68,7 +69,7 @@ export const getAccessByToken = async (req: Request, res: Response) => {
     visitType,
   });
   const permissions =
-    data.access_type === "event_dashboard"
+    data.accessLink.access_type === "event_dashboard"
       ? {
           canViewEventDashboard: true,
           canViewGlobalFolder: true,
@@ -80,7 +81,7 @@ export const getAccessByToken = async (req: Request, res: Response) => {
           canDownloadSubfolderMedia: false,
           canDeleteSubfolder: false,
         }
-      : data.access_type === "global_upload"
+      : data.accessLink.access_type === "global_upload"
         ? {
             canViewEventDashboard: false,
             canViewGlobalFolder: false,
@@ -92,7 +93,7 @@ export const getAccessByToken = async (req: Request, res: Response) => {
             canDownloadSubfolderMedia: false,
             canDeleteSubfolder: false,
           }
-        : data.access_type === "subfolder_upload"
+        : data.accessLink.access_type === "subfolder_upload"
           ? {
               canViewEventDashboard: false,
               canViewGlobalFolder: false,
@@ -106,7 +107,7 @@ export const getAccessByToken = async (req: Request, res: Response) => {
               canDownloadSubfolderMedia: false,
               canDeleteSubfolder: false,
             }
-          : data.access_type === "subfolder_dashboard"
+          : data.accessLink.access_type === "subfolder_dashboard"
             ? {
                 canViewEventDashboard: false,
                 canViewGlobalFolder: false,
@@ -122,10 +123,10 @@ export const getAccessByToken = async (req: Request, res: Response) => {
   return res.json({
     message: "Access resolved",
     data: {
-      accessType: data.access_type,
-      event: { title: data.title, slug: data.slug },
-      folder: data.folder_name
-        ? { name: data.folder_name, type: data.folder_type }
+      accessType: data.accessLink.access_type,
+      event: { title: data.event.title, slug: data.event.slug },
+      folder: data.folder
+        ? { name: data.folder.name, type: data.folder.folder_type }
         : null,
       permissions,
     },
@@ -142,22 +143,52 @@ export const createSubfolderByToken = async (req: Request, res: Response) => {
       .status(400)
       .json({ message: "Validation failed", errors: parsed.error.flatten() });
   }
-  const result = await createSubfolderFromAccess(token, parsed.data);
-  const baseUrl = env.APP_BASE_URL || `http://localhost:${env.PORT}`;
-  return res.status(201).json({
-    message: "Subfolder created successfully",
-    data: {
-      subfolder: result.subfolder,
-      accessLinks: {
-        subfolderUpload: {
-          ...result.accessLinks.subfolderUpload,
-          url: `${baseUrl}/api/access/${result.accessLinks.subfolderUpload.access_token}`,
-        },
-        subfolderDashboard: {
-          ...result.accessLinks.subfolderDashboard,
-          url: `${baseUrl}/api/access/${result.accessLinks.subfolderDashboard.access_token}`,
+  try {
+    const result = await createSubfolderFromAccess(token, parsed.data);
+    const baseUrl = env.APP_BASE_URL || `http://localhost:${env.PORT}`;
+    return res.status(201).json({
+      message: "Subfolder created successfully",
+      data: {
+        subfolder: result.subfolder,
+        accessLinks: {
+          subfolderUpload: {
+            ...result.accessLinks.subfolderUpload,
+            url: `${baseUrl}/api/access/${result.accessLinks.subfolderUpload.access_token}`,
+          },
+          subfolderDashboard: {
+            ...result.accessLinks.subfolderDashboard,
+            url: `${baseUrl}/api/access/${result.accessLinks.subfolderDashboard.access_token}`,
+          },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Subfolder creation failed";
+    return res.status(400).json({ message });
+  }
+};
+export const uploadMediaByToken = async (req: Request, res: Response) => {
+  const token = getTokenParam(req.params.token);
+  if (!token) {
+    return res.status(400).json({ message: "Token is required" });
+  }
+  if (!req.file) {
+    return res.status(400).json({ message: "File is required" });
+  }
+  try {
+    const media = await uploadMediaFromAccess({ token, file: req.file });
+    return res
+      .status(201)
+      .json({ message: "File uploaded successfully", data: media });
+  } catch (error) {
+    console.error("UPLOAD ERROR:", error);
+
+    const message = error instanceof Error ? error.message : "Upload failed";
+
+    return res.status(400).json({
+      message,
+      error,
+    });
+  }
 };
