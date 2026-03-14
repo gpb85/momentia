@@ -47,9 +47,12 @@ export const getAccessByToken = async (req: Request, res: Response) => {
   const visitType =
     data.access_type === "event_dashboard"
       ? "dashboard_view"
-      : data.access_type === "global_upload"
+      : data.access_type === "global_upload" ||
+          data.access_type === "subfolder_upload"
         ? "upload_page_view"
-        : "open";
+        : data.access_type === "subfolder_dashboard"
+          ? "dashboard_view"
+          : "open";
   await logAccessVisit({
     accessLinkId: data.id,
     eventId: data.event_id,
@@ -66,10 +69,56 @@ export const getAccessByToken = async (req: Request, res: Response) => {
   });
   const permissions =
     data.access_type === "event_dashboard"
-      ? { canViewEventDashboard: true, canCreateSubfolder: true }
+      ? {
+          canViewEventDashboard: true,
+          canViewGlobalFolder: true,
+          canCreateSubfolder: true,
+          canUploadImagesToGlobalFolder: false,
+          canUploadVideosToGlobalFolder: false,
+          canViewSubfolderDashboard: false,
+          canUploadToSubfolder: false,
+          canDownloadSubfolderMedia: false,
+          canDeleteSubfolder: false,
+        }
       : data.access_type === "global_upload"
-        ? { canUploadImages: true }
-        : {};
+        ? {
+            canViewEventDashboard: false,
+            canViewGlobalFolder: false,
+            canCreateSubfolder: false,
+            canUploadImagesToGlobalFolder: true,
+            canUploadVideosToGlobalFolder: false,
+            canViewSubfolderDashboard: false,
+            canUploadToSubfolder: false,
+            canDownloadSubfolderMedia: false,
+            canDeleteSubfolder: false,
+          }
+        : data.access_type === "subfolder_upload"
+          ? {
+              canViewEventDashboard: false,
+              canViewGlobalFolder: false,
+              canCreateSubfolder: false,
+              canUploadImagesToGlobalFolder: false,
+              canUploadVideosToGlobalFolder: false,
+              canViewSubfolderDashboard: false,
+              canUploadToSubfolder: true,
+              canUploadImagesToSubfolder: true,
+              canUploadVideosToSubfolder: true,
+              canDownloadSubfolderMedia: false,
+              canDeleteSubfolder: false,
+            }
+          : data.access_type === "subfolder_dashboard"
+            ? {
+                canViewEventDashboard: false,
+                canViewGlobalFolder: false,
+                canCreateSubfolder: false,
+                canUploadImagesToGlobalFolder: false,
+                canUploadVideosToGlobalFolder: false,
+                canViewSubfolderDashboard: true,
+                canUploadToSubfolder: false,
+                canDownloadSubfolderMedia: true,
+                canDeleteSubfolder: true,
+              }
+            : {};
   return res.json({
     message: "Access resolved",
     data: {
@@ -95,22 +144,20 @@ export const createSubfolderByToken = async (req: Request, res: Response) => {
   }
   const result = await createSubfolderFromAccess(token, parsed.data);
   const baseUrl = env.APP_BASE_URL || `http://localhost:${env.PORT}`;
-  return res
-    .status(201)
-    .json({
-      message: "Subfolder created successfully",
-      data: {
-        subfolder: result.subfolder,
-        accessLinks: {
-          subfolderUpload: {
-            ...result.accessLinks.subfolderUpload,
-            url: `${baseUrl}/api/access/${result.accessLinks.subfolderUpload.access_token}`,
-          },
-          subfolderDashboard: {
-            ...result.accessLinks.subfolderDashboard,
-            url: `${baseUrl}/api/access/${result.accessLinks.subfolderDashboard.access_token}`,
-          },
+  return res.status(201).json({
+    message: "Subfolder created successfully",
+    data: {
+      subfolder: result.subfolder,
+      accessLinks: {
+        subfolderUpload: {
+          ...result.accessLinks.subfolderUpload,
+          url: `${baseUrl}/api/access/${result.accessLinks.subfolderUpload.access_token}`,
+        },
+        subfolderDashboard: {
+          ...result.accessLinks.subfolderDashboard,
+          url: `${baseUrl}/api/access/${result.accessLinks.subfolderDashboard.access_token}`,
         },
       },
-    });
+    },
+  });
 };
